@@ -1,0 +1,6 @@
+PyQt5>=5.15
+mss>=9.0
+opencv-python>=4.8
+numpy
+Pillow>=10
+

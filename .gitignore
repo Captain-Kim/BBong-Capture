@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# 빌드 결과물 (설치 파일은 GitHub Releases에 첨부)
+build/
+dist/
+*.spec
+
+# build.bat이 icon.png로 다시 만드는 파일
+installer/icon.ico
