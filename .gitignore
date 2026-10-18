@@ -9,3 +9,7 @@ dist/
 
 # build.bat이 icon.png로 다시 만드는 파일
 installer/icon.ico
+
+# 홍보용 스크린샷 · 영상과 그걸 만드는 스크립트
+promo/
+tests/promo_*.py

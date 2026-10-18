@@ -2,6 +2,8 @@
 
 <img width="2336" height="1744" alt="Image" src="https://github.com/user-attachments/assets/eb081109-9483-4614-bd85-09160d52edc2" />
 
+https://github.com/user-attachments/assets/982dae08-948b-4c1b-8d8d-95df178111c2
+
 Windows용 캡처 앱입니다.
 우리 집 강아지 짬뽕이가 만든 앱입니다. 어떤 특정 앱과 비슷한 느낌을 받으셨으면 기분 탓일 겁니다.
 
