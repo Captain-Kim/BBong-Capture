@@ -23,6 +23,7 @@ DEFAULTS = {
     "quick_access_pos": "bottom-left",
     "quick_access_size": "medium",
     "quick_access_info": True,
+    "buddy_toast": True,
     "theme": "dark",
     "show_crosshair": True,
     "show_magnifier": True,

@@ -7,7 +7,7 @@ python -m pip install -U pyinstaller pyinstaller-hooks-contrib || goto :err
 python installer\make_ico.py || goto :err
 python -m PyInstaller --noconfirm --clean --windowed --name BBongCapture ^
   --icon installer\icon.ico ^
-  --add-data "icon.png;." --add-data "pop.mp3;." --add-data "bbong.jpg;." --add-data "PretendardVariable.ttf;." ^
+  --add-data "icon.png;." --add-data "pop.mp3;." --add-data "bbong.jpg;." --add-data "bbong_buddy.png;." --add-data "stickers;stickers" --add-data "PretendardVariable.ttf;." ^
   main.py || goto :err
 echo.
 echo [1/2] exe 빌드 완료: dist\BBongCapture\BBongCapture.exe

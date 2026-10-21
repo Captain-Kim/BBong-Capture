@@ -734,20 +734,28 @@ class ImageItem(RectGeom, Ann, QGraphicsRectItem):
     kind = "image"
     has_color = False
 
-    def __init__(self, image: QImage, pos=QPointF(0, 0), width=None):
+    def __init__(self, image: QImage, pos=QPointF(0, 0), width=None, sticker=False):
         w = width or image.width()
         h = w * image.height() / max(1, image.width())
         super().__init__(QRectF(0, 0, w, h))
         self.image = image
+        self.sticker = sticker       # 스티커: 둥근 모서리 · 테두리 없이 투명 배경 그대로
+        self.opacity_ = 1.0          # 0.1 ~ 1.0
         self.setPos(pos)
         self.setPen(QPen(Qt.NoPen))
 
     def paint(self, painter, opt, widget=None):
         painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         r = self.rect()
+        painter.save()
+        painter.setOpacity(painter.opacity() * self.opacity_)
+        if self.sticker:
+            painter.drawImage(r, self.image)
+            painter.restore()
+            _sel_outline(self, painter, r)
+            return
         path = QPainterPath()
         path.addRoundedRect(r, 8, 8)
-        painter.save()
         painter.setClipPath(path)
         painter.drawImage(r, self.image)
         painter.restore()
@@ -774,16 +782,20 @@ class ImageItem(RectGeom, Ann, QGraphicsRectItem):
     def to_dict(self):
         d = self.common()
         r = self.rect()
-        d.update(rect=[r.x(), r.y(), r.width(), r.height()], png=imgutil.to_b64(self.image))
+        d.update(rect=[r.x(), r.y(), r.width(), r.height()], png=imgutil.to_b64(self.image),
+                 sticker=self.sticker, opacity=self.opacity_)
         return d
 
     def apply(self, d):
         self.setPos(_P(d["pos"]))
         self.setRect(QRectF(*d["rect"]))
+        self.sticker = d.get("sticker", self.sticker)
+        self.opacity_ = d.get("opacity", 1.0)
+        self.update()
 
     @staticmethod
     def from_dict(d, ed=None):
-        it = ImageItem(imgutil.from_b64(d["png"]))
+        it = ImageItem(imgutil.from_b64(d["png"]), sticker=d.get("sticker", False))
         it.apply(d)
         return it
 

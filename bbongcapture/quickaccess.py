@@ -1,14 +1,15 @@
 """Quick Access overlay: rounded, animated thumbnail cards shown after each capture."""
+import math
 import os
 
 import cv2
 import numpy as np
 from PyQt5.QtCore import (QEasingCurve, QMimeData, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRectF, QSize,
                           Qt, QUrl, QVariantAnimation, pyqtSignal)
-from PyQt5.QtGui import QColor, QDrag, QFont, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PyQt5.QtGui import QColor, QDrag, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import QGraphicsOpacityEffect, QMenu, QPushButton, QWidget
 
-from . import imgutil, winutil
+from . import imgutil, paths, winutil
 from .theme import icon, px, round_menu
 
 SIZES = {"small": (190, 120), "medium": (250, 158), "large": (320, 202)}
@@ -55,6 +56,127 @@ class GlassButton(QPushButton):
         self.eff.setOpacity(0.0)
         self.setGraphicsEffect(self.eff)
         self.hide()
+
+
+class BuddyToast(QWidget):
+    """짬뽕이가 말풍선과 함께 고개를 까딱거리며 "캡처완료!"를 알려 주는 작은 알림."""
+    _pix = None
+    DOG = 84
+    LIFE = 2600
+
+    def __init__(self, text="캡처완료!"):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.text = text
+        self.flip = False
+        self.dog = px(self.DOG)
+        self.font_ = QFont(_fam(), 11)
+        self.font_.setBold(True)
+        tw = QFontMetrics(self.font_).horizontalAdvance(text)
+        self.bw, self.bh = tw + px(30), px(38)
+        self.tail = px(9)
+        self.m = px(8)                       # room for rotation / shadow
+        self.setFixedSize(self.m * 2 + self.dog + self.tail + self.bw, self.m * 2 + self.dog + px(8))
+        self.t = 0.0
+        self.anim = QVariantAnimation(self)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(float(self.LIFE))
+        self.anim.setDuration(self.LIFE)
+        self.anim.valueChanged.connect(self._tick)
+        self.anim.finished.connect(self._done)
+
+    @classmethod
+    def pixmap(cls):
+        if cls._pix is None:
+            img = QImage(paths.res("bbong_buddy.png"))
+            if img.isNull():
+                cls._pix = QPixmap()
+            else:
+                img = img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+                cls._pix = QPixmap.fromImage(img)
+        return cls._pix
+
+    def popup(self, card, target: QPoint, top_side=True):
+        """카드 뒤에서 고개를 내미는 위치로 놓는다. top_side=False면 카드 아래쪽에서 거꾸로 매달린다."""
+        if self.pixmap().isNull():
+            return
+        self.flip = not top_side
+        scr = QGuiApplication.screenAt(target) or QGuiApplication.primaryScreen()
+        g = scr.availableGeometry()
+        peek = self.m + px(6) + int(self.dog * (0.15 if self.flip else 0.88))   # 카드 가장자리가 놓일 위젯 내부 y
+        x = target.x() + px(PAD) + px(14) - self.m
+        y = (target.y() + px(PAD) + card.ch - peek) if self.flip else (target.y() + px(PAD) - peek)
+        x = max(g.left(), min(x, g.right() - self.width()))
+        y = max(g.top(), min(y, g.bottom() - self.height()))
+        self.move(x, y)
+        super().show()
+        winutil.exclude_from_capture(self)
+        card.raise_()                       # 카드가 짬뽕이보다 앞에 오도록
+        self.anim.start()
+
+    def _tick(self, v):
+        self.t = float(v)
+        if self.t > self.LIFE - 350:
+            self.setWindowOpacity(max(0.0, (self.LIFE - self.t) / 350))
+        self.update()
+
+    def _done(self):
+        self.hide()
+        self.deleteLater()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform | QPainter.TextAntialiasing)
+        t = self.t
+        # 등장: 통통 튀며 커짐
+        pop = QEasingCurve(QEasingCurve.OutBack).valueForProgress(min(1.0, t / 380))
+        # 까딱까딱: 짧게 두세 번 끄덕이고 잦아든다
+        nod = 0.0 if t < 250 else math.sin((t - 250) / 1000 * 2 * math.pi * 2.2) * 11 * math.exp(-(t - 250) / 1700)
+        hop = -abs(math.sin((t - 250) / 1000 * math.pi * 2.2)) * px(4) * math.exp(-(t - 250) / 1700) if t >= 250 else 0
+        d = self.dog
+        pm = self.pixmap()
+        base_x, base_y = self.m, self.m + px(6)
+        p.save()
+        if self.flip:                                    # 카드 아래에 매달림: 위쪽 중앙을 축으로 뒤집어 그린다
+            p.translate(base_x + d / 2, base_y - hop)
+            p.rotate(180 + nod)
+        else:
+            p.translate(base_x + d / 2, base_y + d + hop)    # 턱(아래 중앙)을 축으로 회전
+            p.rotate(nod)
+        p.scale(pop, pop)
+        sc = pm.scaled(d, d, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        p.drawPixmap(int(-sc.width() / 2), int(-sc.height()), sc)
+        p.restore()
+        # 말풍선
+        bp = min(1.0, max(0.0, (t - 120) / 320))
+        bs = QEasingCurve(QEasingCurve.OutBack).valueForProgress(bp)
+        if bs <= 0:
+            return
+        bx = self.m + d + self.tail - px(4)
+        by = self.m + px(6) + d - self.bh if self.flip else self.m + px(10)
+        rect = QRectF(bx, by, self.bw, self.bh)
+        p.save()
+        p.translate(rect.left(), rect.center().y())
+        p.scale(bs, bs)
+        p.translate(-rect.left(), -rect.center().y())
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.bh / 2, self.bh / 2)
+        cy = rect.center().y()
+        path.moveTo(rect.left() + px(2), cy - px(6))
+        path.lineTo(rect.left() - self.tail, cy + px(3))
+        path.lineTo(rect.left() + px(2), cy + px(8))
+        path.closeSubpath()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 40))
+        p.drawPath(path.translated(0, px(2)))
+        p.setBrush(QColor(255, 255, 255))
+        p.drawPath(path.simplified())
+        p.setPen(QColor(28, 28, 32))
+        p.setFont(self.font_)
+        p.drawText(rect, Qt.AlignCenter, self.text)
+        p.restore()
 
 
 class QuickAccessCard(QWidget):
@@ -366,7 +488,7 @@ class QuickAccessManager:
         self.hidden = False
 
     # ------------------------------------------------------------------ add / remove
-    def add(self, thumb, path, kind, seconds=None):
+    def add(self, thumb, path, kind, seconds=None, buddy=False):
         c = self.cfg()
         pos = c.get("quick_access_pos", "bottom-left")
         card_screen = QGuiApplication.screenAt(self._cursor()) or QGuiApplication.primaryScreen()
@@ -386,7 +508,15 @@ class QuickAccessManager:
         for other, t in targets.items():
             if other is not card:
                 other.animate_to(t)
+        if buddy and c.get("buddy_toast", True):
+            self._buddy(card, targets[card], pos, "캡처완료!" if kind == "image" else "녹화완료!")
         return card
+
+    def _buddy(self, card, target, pos, text):
+        from PyQt5.QtCore import QTimer
+        b = BuddyToast(text)
+        self._buddy_ref = b
+        QTimer.singleShot(220, lambda: card.isVisible() and b.popup(card, target, top_side=not pos.startswith("top")))
 
     def _cursor(self):
         from PyQt5.QtGui import QCursor

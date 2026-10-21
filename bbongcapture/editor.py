@@ -7,11 +7,11 @@ import tempfile
 import numpy as np
 from PyQt5.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, QUrl,
                           pyqtSignal)
-from PyQt5.QtGui import (QBrush, QColor, QDrag, QFont, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap,
+from PyQt5.QtGui import (QBrush, QColor, QCursor, QDrag, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap,
                          QTransform)
 from PyQt5.QtWidgets import (QAction, QActionGroup, QApplication, QCheckBox, QColorDialog, QComboBox, QDialog,
                              QDoubleSpinBox, QFileDialog, QFrame, QGraphicsDropShadowEffect, QGraphicsItem,
-                             QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton,
+                             QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton,
                              QSlider, QSpinBox, QToolButton, QUndoCommand, QUndoStack, QVBoxLayout, QWidget)
 
 from . import fonts, imgutil, winutil
@@ -441,6 +441,9 @@ class AnnotView(QGraphicsView):
             ed.delete_selected()
             return
         if e.key() == Qt.Key_Escape:
+            if ed.tool == "sticker":
+                ed.cancel_sticker()
+                return
             if ed.crop_item is not None:
                 ed.cancel_crop_clicked()
                 return
@@ -466,6 +469,12 @@ class AnnotView(QGraphicsView):
         if e.button() == Qt.MiddleButton:
             self._pan = e.pos()
             self.setCursor(Qt.ClosedHandCursor)
+            return
+        if tool == "sticker":
+            if e.button() == Qt.LeftButton:
+                ed.place_sticker(self.mapToScene(e.pos()))
+            elif e.button() == Qt.RightButton:
+                ed.cancel_sticker()
             return
         if e.button() != Qt.LeftButton or tool in ("select", "crop"):
             if tool == "select" and e.button() == Qt.LeftButton:
@@ -522,6 +531,9 @@ class AnnotView(QGraphicsView):
             return
         pos = self.mapToScene(e.pos())
         self.ed.show_pos(pos)
+        if self.ed.tool == "sticker":
+            self.ed.move_ghost(pos)
+            return
         it, tool = self.cur_item, self.ed.tool
         if it is not None and e.buttons() & Qt.LeftButton:
             shift = bool(e.modifiers() & Qt.ShiftModifier)
@@ -702,6 +714,7 @@ class EditorWindow(QMainWindow):
         self.setAcceptDrops(False)
         self.path = path
         self.tool = "arrow"
+        self._sticker_tab = 0
         self.color = PALETTE[0]
         self.width = 5
         self.fill = False
@@ -816,6 +829,7 @@ class EditorWindow(QMainWindow):
             al.addWidget(self._tbtn(name, tip, lambda _, n=name: self.transform(n)))
         al.addWidget(self._tbtn("resize", "이미지 크기 조정", self.resize_dialog))
         al.addWidget(self._tbtn("image", "이미지 삽입 (여러 스크린샷 합치기)", self.insert_image_dialog))
+        al.addWidget(self._sticker_button())
         al.addWidget(self._sep())
         al.addWidget(self._tbtn("pin", "화면에 고정  (Ctrl+P)", self.pin))
         al.addWidget(self._tbtn("copy", "클립보드에 복사  (Ctrl+C)", self.copy))
@@ -937,12 +951,43 @@ class EditorWindow(QMainWindow):
         h.addWidget(no)
         cl.addWidget(self.crop_w)
 
+        self.opacity_w = QWidget()
+        h = QHBoxLayout(self.opacity_w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(self._sep())
+        h.addWidget(QLabel("크기"))
+        self.isize_s = QSlider(Qt.Horizontal)
+        self.isize_s.setRange(5, 150)
+        self.isize_s.setValue(25)
+        self.isize_s.setFixedWidth(px(150))
+        self.isize_s.valueChanged.connect(self._set_img_size)
+        self.isize_s.sliderPressed.connect(self._opacity_press)
+        self.isize_s.sliderReleased.connect(self._opacity_release)
+        h.addWidget(self.isize_s)
+        self.isize_lbl = QLabel("25%")
+        self.isize_lbl.setMinimumWidth(px(40))
+        h.addWidget(self.isize_lbl)
+        h.addWidget(self._sep())
+        h.addWidget(QLabel("투명도"))
+        self.opacity_s = QSlider(Qt.Horizontal)
+        self.opacity_s.setRange(10, 100)
+        self.opacity_s.setValue(100)
+        self.opacity_s.setFixedWidth(px(130))
+        self.opacity_s.valueChanged.connect(self._set_opacity)
+        self.opacity_s.sliderPressed.connect(self._opacity_press)
+        self.opacity_s.sliderReleased.connect(self._opacity_release)
+        h.addWidget(self.opacity_s)
+        self.opacity_lbl = QLabel("100%")
+        self.opacity_lbl.setMinimumWidth(px(36))
+        h.addWidget(self.opacity_lbl)
+        cl.addWidget(self.opacity_w)
+
         self.hint_lbl = QLabel()
         self.hint_lbl.setObjectName("muted")
         cl.addWidget(self.hint_lbl)
         # option groups hug their content, so labels stay right next to their controls
         from PyQt5.QtWidgets import QSizePolicy
-        for w in (self.colors_w, self.size_w, self.arrow_w, self.shape_w, self.text_w, self.redact_w, self.crop_w):
+        for w in (self.colors_w, self.size_w, self.arrow_w, self.shape_w, self.text_w, self.redact_w, self.crop_w, self.opacity_w):
             w.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         cl.addStretch(1)
         root.addWidget(ctx)
@@ -1093,6 +1138,8 @@ class EditorWindow(QMainWindow):
     # ------------------------------------------------------------------ tool state
     def set_tool(self, name):
         self.tool = name
+        if name != "sticker":
+            self._drop_ghost()
         if name == "crop":
             self.start_crop()
         else:
@@ -1132,8 +1179,22 @@ class EditorWindow(QMainWindow):
         self.size_lbl_w.setText("크기" if (t == "text" or isinstance(one, TextItem)) else "굵기")
         self.redact_w.setVisible(t == "blur")
         self.crop_w.setVisible(t == "crop")
+        img = one if isinstance(one, ImageItem) else None
+        self.opacity_w.setVisible(img is not None)
+        if img is not None:
+            v = int(round(img.opacity_ * 100))
+            self.opacity_s.blockSignals(True)
+            self.opacity_s.setValue(v)
+            self.opacity_s.blockSignals(False)
+            self.opacity_lbl.setText(f"{v}%")
+            sv = int(round(img.rect().width() / max(1, self.base_image.width()) * 100))
+            self.isize_s.blockSignals(True)
+            self.isize_s.setValue(max(5, min(150, sv)))
+            self.isize_s.blockSignals(False)
+            self.isize_lbl.setText(f"{sv}%")
         hints = {"spotlight": "강조할 영역을 드래그하세요 — 나머지는 어두워집니다",
                  "pixelate": "가릴 영역을 드래그하세요 — 랜덤 노이즈가 적용된 모자이크",
+                 "sticker": "붙일 곳을 클릭하세요 — 우클릭 · Esc 로 취소",
                  "select": "항목을 클릭해 선택 · 핸들로 크기 조절 · 방향키로 미세 이동 · Del 삭제"}
         self.hint_lbl.setText(hints.get(t, ""))
         self.hint_lbl.setVisible(t in hints)
@@ -1417,6 +1478,163 @@ class EditorWindow(QMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(self, "이미지 삽입", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp)")
         for p in paths:
             self.insert_image(QImage(p))
+
+    # ------------------------------------------------------------------ stickers (짬뽕이 이모티콘)
+    STICKER_SETS = (("짬뽕이", "bbong"), ("서리", "seori"))
+
+    def _sticker_button(self):
+        from PyQt5.QtWidgets import QButtonGroup, QGridLayout, QStackedWidget, QWidgetAction
+        from .paths import res
+        b = self._tbtn("sticker", "스티커 붙이기 (짬뽕이 · 서리)")
+        b.setPopupMode(QToolButton.InstantPopup)
+        menu = round_menu(QMenu(self))
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(px(8), px(8), px(8), px(8))
+        v.setSpacing(px(8))
+        tabs = QHBoxLayout()
+        tabs.setSpacing(px(6))
+        stack = QStackedWidget()
+        group = QButtonGroup(box)
+        group.setExclusive(True)
+        for idx, (label, folder) in enumerate(self.STICKER_SETS):
+            tb = QPushButton(label)
+            tb.setCheckable(True)
+            tb.setCursor(Qt.PointingHandCursor)
+            tb.setMinimumHeight(px(28))
+            tb.setStyleSheet(f"QPushButton{{border-radius:{px(14)}px;padding:0 {px(16)}px;font-weight:600;"
+                             f"background:transparent;border:1px solid {C['border']};}}"
+                             f"QPushButton:checked{{background:#0a84ff;color:white;border-color:#0a84ff;}}")
+            group.addButton(tb, idx)
+            tabs.addWidget(tb)
+            page = QWidget()
+            g = QGridLayout(page)
+            g.setContentsMargins(0, 0, 0, 0)
+            g.setSpacing(px(6))
+            for i in range(9):
+                img = QImage(res(f"stickers/{folder}/{i + 1:02d}.png"))
+                if img.isNull():
+                    continue
+                sb = QToolButton()
+                sb.setIcon(QIcon(QPixmap.fromImage(img)))
+                sb.setIconSize(QSize(px(72), px(72)))
+                sb.setAutoRaise(True)
+                sb.setCursor(Qt.PointingHandCursor)
+                sb.clicked.connect(lambda _, im=img, m=menu: (m.close(), self.start_sticker(im)))
+                g.addWidget(sb, i // 3, i % 3)
+            stack.addWidget(page)
+        tabs.addStretch(1)
+        group.buttonClicked[int].connect(lambda i: (stack.setCurrentIndex(i), setattr(self, "_sticker_tab", i)))
+        first = getattr(self, "_sticker_tab", 0)
+        group.button(first).setChecked(True)
+        stack.setCurrentIndex(first)
+        menu.aboutToShow.connect(lambda: (group.button(self._sticker_tab).setChecked(True),
+                                          stack.setCurrentIndex(self._sticker_tab)))
+        v.addLayout(tabs)
+        v.addWidget(stack)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(box)
+        menu.addAction(wa)
+        b.setMenu(menu)
+        self.sticker_menu = menu
+        return b
+
+    def _sticker_width(self):
+        return max(90.0, self.base_image.width() * 0.22)
+
+    def start_sticker(self, img: QImage):
+        """스티커를 고르면 반투명 미리보기가 포인터를 따라다니고, 클릭한 곳에 붙인다."""
+        self._drop_ghost()
+        self.sticker_img = img
+        self.tool_btns["select"].setChecked(True)
+        self.set_tool("sticker")
+        w = self._sticker_width()
+        h = w * img.height() / img.width()
+        ghost = QGraphicsPixmapItem(QPixmap.fromImage(img).scaled(int(w), int(h), Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+        ghost.setOpacity(0.55)
+        ghost.setZValue(50)
+        ghost.setAcceptedMouseButtons(Qt.NoButton)
+        ghost.setVisible(False)
+        self.scene.addItem(ghost)
+        self.ghost = ghost
+        self.view.setCursor(Qt.CrossCursor)
+        vp = self.view.viewport()
+        lp = vp.mapFromGlobal(QCursor.pos())
+        if vp.rect().contains(lp):
+            self.move_ghost(self.view.mapToScene(lp))
+
+    def move_ghost(self, scene_pos):
+        g = getattr(self, "ghost", None)
+        if g is None:
+            return
+        r = g.boundingRect()
+        g.setPos(scene_pos.x() - r.width() / 2, scene_pos.y() - r.height() / 2)
+        g.setVisible(True)
+
+    def _drop_ghost(self):
+        g = getattr(self, "ghost", None)
+        if g is not None:
+            if g.scene() is not None:
+                self.scene.removeItem(g)
+            self.ghost = None
+
+    def cancel_sticker(self):
+        self.tool_btns["select"].setChecked(True)
+        self.set_tool("select")
+
+    def place_sticker(self, scene_pos):
+        img = self.sticker_img
+        if img is None:
+            return
+        width = self._sticker_width()
+        h = width * img.height() / img.width()
+        it = ImageItem(img, QPointF(scene_pos.x() - width / 2, scene_pos.y() - h / 2), width, sticker=True)
+        it.setZValue(0.8)
+        self.tool_btns["select"].setChecked(True)
+        self.set_tool("select")
+        self.add_item(it)
+        it.setSelected(True)
+        self.toast("붙였어요 — 위쪽 크기·투명도 슬라이더나 모서리 핸들로 조절하세요")
+
+    def _set_img_size(self, v):
+        self.isize_lbl.setText(f"{v}%")
+        dragging = self.isize_s.isSliderDown()
+        if not dragging:
+            self._opacity_press()
+        for it in self._opacity_targets():
+            r = it.rect()
+            c = it.mapToScene(r.center())
+            w = max(10.0, self.base_image.width() * v / 100)
+            h = w * it.image.height() / max(1, it.image.width())
+            it.prepareGeometryChange()
+            it.setRect(QRectF(0, 0, w, h))
+            it.setPos(c.x() - w / 2, c.y() - h / 2)
+            it.update()
+        self.handles.set_target(self._selected()[0] if len(self._selected()) == 1 else None)
+        if not dragging:
+            self._opacity_release()
+
+    def _opacity_targets(self):
+        return [i for i in self._selected() if isinstance(i, ImageItem)]
+
+    def _opacity_press(self):
+        self._opacity_old = [(it, it.to_dict()) for it in self._opacity_targets()]
+
+    def _set_opacity(self, v):
+        self.opacity_lbl.setText(f"{v}%")
+        dragging = self.opacity_s.isSliderDown()
+        if not dragging:
+            self._opacity_press()
+        for it in self._opacity_targets():
+            it.opacity_ = v / 100
+            it.update()
+        if not dragging:
+            self._opacity_release()
+
+    def _opacity_release(self):
+        for it, old in getattr(self, "_opacity_old", []):
+            self.push_state(it, old, it.to_dict())
+        self._opacity_old = []
 
     def paste(self):
         fi = self.scene.focusItem()

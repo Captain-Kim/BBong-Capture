@@ -412,6 +412,13 @@ def _draw(p: QPainter, name: str, color: QColor):
         p.drawRoundedRect(QRectF(3, 4, 18, 16), 3, 3)
         p.drawEllipse(QRectF(7, 8, 3, 3))
         p.drawPolyline(_poly([(4, 18), (10, 12), (14, 16), (17, 13), (21, 17)]))
+    elif name == "sticker":
+        p.drawEllipse(QRectF(3.5, 3.5, 17, 17))
+        p.setBrush(fillc)
+        p.drawEllipse(QRectF(8, 9, 2.2, 2.6))
+        p.drawEllipse(QRectF(13.8, 9, 2.2, 2.6))
+        p.setBrush(Qt.NoBrush)
+        p.drawArc(QRectF(8, 9.5, 8, 7), 200 * 16, 140 * 16)
     elif name == "drag":
         for x in (8, 14):
             for y in (6, 12, 18):

@@ -241,6 +241,7 @@ class Controller(QObject):
         ac = round_menu(qa.addMenu("자동 닫기"))
         choice(ac, [("사용 안 함", 0), ("3초", 3), ("5초", 5), ("7초", 7), ("10초", 10), ("30초", 30)], "quick_access_seconds")
         toggle(qa, "파일 정보 표시", "quick_access_info")
+        toggle(qa, "짬뽕이 알림 (캡처완료!)", "buddy_toast")
         qa.addSeparator()
         qa.addAction(icon("restore"), "닫은 오버레이 복원", self.restore_overlay)
         qa.addAction(icon("eye"), "오버레이 숨기기 / 보이기", self.qa.toggle_hidden)
@@ -503,7 +504,7 @@ class Controller(QObject):
         if ac["open_editor"]:
             self.open_editor(img, str(path))
         elif ac["quick_access"]:
-            self.qa.add(img, str(path), "image")
+            self.qa.add(img, str(path), "image", buddy=True)
 
     def restore_overlay(self):
         if not self.qa.restore_last():
@@ -732,7 +733,7 @@ class Controller(QObject):
             return
         thumb = video_thumb(path)
         if settings["after_capture"]["quick_access"]:
-            self.qa.add(thumb, path, "video")
+            self.qa.add(thumb, path, "video", buddy=True)
         else:
             self.tray.showMessage("녹화가 저장되었습니다", path, QSystemTrayIcon.Information)
         if settings["after_capture"]["copy"]:
