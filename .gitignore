@@ -13,3 +13,12 @@ installer/icon.ico
 # 홍보용 스크린샷 · 영상과 그걸 만드는 스크립트
 promo/
 tests/promo_*.py
+
+# 스티커 · 아이콘 · 마스코트 원본
+88sticker.png
+99sticker.png
+bbong01.png
+
+# 쓰지 않는 배너 · 개발용 테스트 스크립트
+banner.png
+tests/
