@@ -21,7 +21,7 @@ Windows용 캡처 앱입니다.
 
 또는 아래 설치 링크를 클릭하세요.
 
-https://github.com/Captain-Kim/BBong-Capture/releases/download/v1.0.0/BBongCapture-Setup.exe
+https://github.com/Captain-Kim/BBong-Capture/releases/tag/v1.1.0
 
 <img width="598" height="464" alt="Image" src="https://github.com/user-attachments/assets/f4e187c1-ccce-4232-abda-8d9438343853" />
 
